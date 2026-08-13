@@ -2,7 +2,7 @@
   "name": "rls-guard",
   "version": "1.0.0-rc.1",
   "license": "PolyForm-Shield-1.0.0",
-  "author": "Mickael Marie Thomas",
+  "author": "Mickaël Marie Thomas",
   "description": "Security CI for multi-tenant Postgres — RLS invariants, migration replay, drift detection. Initially proven on Supabase/Postgres.",
   "type": "module",
   "private": true,
