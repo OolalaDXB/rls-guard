@@ -1,0 +1,8 @@
+tenant:
+  columns: [tenant_id]
+  scope_functions: [current_tenant_id]
+privileged_roles: [service_role]
+schemas:
+  include: [public]
+  exclude: [auth, storage]
+postgres_version: "16"

@@ -1,0 +1,14 @@
+tenant:
+  columns: [tenant_id]
+  scope_functions: [current_tenant_id]
+privileged_roles: [service_role]
+schemas:
+  include: [public]
+  exclude: [auth, storage]
+exceptions:
+  public_policies:
+    - name: gadgets_public_read
+      table: gadgets
+      reason: "Test: expired exception must re-enforce the invariant"
+      expires: 2020-01-01
+postgres_version: "16"

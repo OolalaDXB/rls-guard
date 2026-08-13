@@ -1,0 +1,24 @@
+# RLS Guard — replay gate. Copy into .github/workflows/ of your repository.
+#
+# Zero secrets: the action boots its own ephemeral Postgres, replays your
+# migrations, and fails the check on any invariant violation. Make this job a
+# required status check (Settings → Branches) — the exit code is the gate.
+name: RLS Guard
+
+on:
+  pull_request:                # never pull_request_target — the action refuses it anyway
+    paths:
+      - "supabase/migrations/**"
+      - "db/rls-snapshot.json"
+      - "rls-guard.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read               # minimal; add pull-requests: write ONLY for your own comment step
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: OolalaDXB/rlsguard@main   # pin a tag or SHA in production

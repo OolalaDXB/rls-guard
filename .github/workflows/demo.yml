@@ -1,0 +1,56 @@
+name: Demo
+
+# Runs the REAL action against the demo migration sets: the clean set must
+# pass, the violating set must make the action step actually fail. This is
+# the reproducible PASS → BLOCK proof, kept green at the workflow level via
+# continue-on-error + explicit outcome assertions.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "feat/**"]
+    paths:
+      - "demo/**"
+      - "action.yml"
+      - "action/**"
+      - "src/**"
+      - "sql/**"
+      - ".github/workflows/demo.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  demo-pass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: guard
+        uses: ./
+        with:
+          migrations-dir: demo/migrations-pass
+          report-dir: evidence
+      - name: Assert PASS
+        run: test "${{ steps.guard.outputs.verdict }}" = "pass"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenant-isolation-evidence-pass
+          path: evidence/
+
+  demo-block:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: guard
+        uses: ./
+        continue-on-error: true
+        with:
+          migrations-dir: demo/migrations-block
+          report-dir: evidence-block
+      - name: Assert BLOCK — the gate really failed
+        run: |
+          test "${{ steps.guard.outcome }}" = "failure"
+          test "${{ steps.guard.outputs.verdict }}" = "block"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenant-isolation-evidence-block
+          path: evidence-block/

@@ -1,0 +1,75 @@
+name: "RLS Guard"
+description: >-
+  Security CI for multi-tenant Postgres — replays your migrations on an
+  ephemeral Postgres and blocks the merge on RLS invariant violations.
+  No production secret needed.
+branding:
+  icon: shield
+  color: gray-dark
+
+# The gate is the exit code (check conclusion → required status check).
+# Minimal workflow permissions: contents: read. Add pull-requests: write
+# ONLY if you add your own PR-comment step on top — never required.
+inputs:
+  config:
+    description: "Path to rls-guard.yml"
+    required: false
+    default: "rls-guard.yml"
+  migrations-dir:
+    description: "Directory of .sql migrations, applied in alphabetical order"
+    required: false
+    default: "supabase/migrations"
+  bootstrap-sql:
+    description: >-
+      SQL applied before migrations to emulate the target platform on stock
+      Postgres. Empty = bundled Supabase-flavoured stubs; "none" = skip;
+      or a path to your own file.
+    required: false
+    default: ""
+  database-url:
+    description: >-
+      Optional: reuse an existing ephemeral Postgres (e.g. a job service
+      container) instead of letting the action boot its own. Never point
+      this at a real database.
+    required: false
+    default: ""
+  report-dir:
+    description: >-
+      Optional: directory where the tenant isolation evidence report is
+      written (evidence.json + self-contained evidence.html). Pair it with
+      actions/upload-artifact to attach the report to the run. Empty = no
+      report.
+    required: false
+    default: ""
+  live-url:
+    description: >-
+      Optional: run live drift detection against a real database instead of
+      replay. Use a READ-ONLY credential from repository secrets, and only in
+      schedule/workflow_dispatch workflows — the action refuses this input on
+      pull_request events, and refuses pull_request_target entirely.
+    required: false
+    default: ""
+
+outputs:
+  verdict:
+    description: "pass or block"
+    value: ${{ steps.check.outputs.verdict }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    - shell: bash
+      run: cd "$GITHUB_ACTION_PATH" && npm ci --omit=dev --no-audit --no-fund
+    - id: check
+      shell: bash
+      env:
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_MIGRATIONS_DIR: ${{ inputs.migrations-dir }}
+        INPUT_BOOTSTRAP_SQL: ${{ inputs.bootstrap-sql }}
+        INPUT_DATABASE_URL: ${{ inputs.database-url }}
+        INPUT_LIVE_URL: ${{ inputs.live-url }}
+        INPUT_REPORT_DIR: ${{ inputs.report-dir }}
+      run: node "$GITHUB_ACTION_PATH/action/entrypoint.mjs"

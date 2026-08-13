@@ -1,0 +1,31 @@
+tenant:
+  columns: [tenant_id]
+  scope_functions: [current_tenant_id]
+privileged_roles: [service_role]
+schemas:
+  include: [public]
+  exclude: [auth, storage]
+exceptions:
+  global_tables:
+    - name: leaky_notes
+      reason: "Test: intentionally documented as out of tenant scope"
+  public_policies:
+    - name: gadgets_public_read
+      table: gadgets
+      reason: "Test: intentionally public read"
+  tenant_blind_writes:
+    - name: widgets_admin_insert
+      table: widgets
+      reason: "Test: documented admin write path"
+    - name: widgets_sneaky_update
+      table: widgets
+      reason: "Test: documented identity-only update path"
+    - name: gadgets_identity_insert
+      table: gadgets
+      reason: "Test: documented identity-only insert path"
+  definer_functions:
+    - name: process_widget
+      reason: "Test: reviewed and accepted definer function"
+    - name: ghost_function_matching_nothing
+      reason: "Test: must be reported as stale"
+postgres_version: "16"

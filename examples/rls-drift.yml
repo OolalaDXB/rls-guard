@@ -1,0 +1,24 @@
+# RLS Guard — optional live drift detection. Copy into .github/workflows/.
+#
+# Needs a READ-ONLY database credential in repository secrets. Runs only on a
+# schedule or manual dispatch: the action refuses live-url on pull_request
+# events, so a fork PR can never reach this credential. PR gating itself works
+# entirely in replay mode (see rls-replay.yml) with no secret at all.
+name: RLS drift (live)
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: OolalaDXB/rlsguard@main
+        with:
+          live-url: ${{ secrets.RLS_GUARD_DATABASE_URL }}

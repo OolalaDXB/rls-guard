@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      RLS_GUARD_TEST_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      - run: npm test
+
+  # Packaging proof: the npm tarball, installed in a pristine directory, must
+  # drive the full init → PASS → evidence → BLOCK flow with correct exit codes.
+  package:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+      FRESH_URL: postgres://postgres:postgres@localhost:5432/fresh_demo
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: npm pack
+        run: |
+          npm pack
+          ls -l rls-guard-*.tgz
+      - name: Fresh install + end-to-end
+        run: |
+          set -e
+          PKG="$GITHUB_WORKSPACE/$(ls rls-guard-*.tgz)"
+          mkdir -p /tmp/fresh && cd /tmp/fresh
+          npm init -y > /dev/null
+          npm install "$PKG" > /dev/null
+          psql "$ADMIN_URL" -c "create database fresh_demo"
+          psql "$FRESH_URL" -q -v ON_ERROR_STOP=1 -f node_modules/rls-guard/sql/bootstrap-replay.sql
+          for f in "$GITHUB_WORKSPACE"/demo/migrations-pass/*.sql; do
+            psql "$FRESH_URL" -q -v ON_ERROR_STOP=1 -f "$f"
+          done
+          npx rls-guard init --url "$FRESH_URL"
+          test -f rls-guard.yml && test -f db/rls-snapshot.json
+          npx rls-guard check --url "$FRESH_URL" --report-dir evidence
+          test -f evidence/evidence.json && test -f evidence/evidence.html
+          psql "$FRESH_URL" -q -v ON_ERROR_STOP=1 -f "$GITHUB_WORKSPACE/demo/migrations-block/010_violations.sql"
+          if npx rls-guard check --url "$FRESH_URL" --report-dir evidence-block; then
+            echo "::error::BLOCK scenario unexpectedly passed" && exit 1
+          else
+            code=$?
+            test "$code" -eq 1 || { echo "::error::expected exit 1, got $code"; exit 1; }
+          fi
+          grep -q '"verdict": "block"' evidence-block/evidence.json
+          echo "Fresh-install e2e OK: init → PASS(+report) → BLOCK exit 1(+report)"
