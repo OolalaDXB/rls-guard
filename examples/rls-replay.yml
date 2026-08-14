@@ -21,4 +21,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: OolalaDXB/rlsguard@main   # pin a tag or SHA in production
+      - uses: OolalaDXB/rls-guard@main   # pin a tag or SHA in production

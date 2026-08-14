@@ -43,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: guard
-        uses: OolalaDXB/rlsguard@main    # pin a tag or SHA in production
+        uses: OolalaDXB/rls-guard@main    # pin a tag or SHA in production
         with:
           report-dir: evidence
       - uses: actions/upload-artifact@v4
@@ -73,7 +73,7 @@ Fork-submitted code can never reach a credential — replay needs none.
 ## Quickstart — CLI
 
 ```sh
-npm install -D github:OolalaDXB/rlsguard   # no npm release yet
+npm install -D github:OolalaDXB/rls-guard   # no npm release yet
 export DATABASE_URL=postgres://…           # an ephemeral/local DB, never prod
 npx rls-guard init                         # writes rls-guard.yml + captures the baseline
 npx rls-guard check --report-dir evidence  # invariants → exit 0/1 + evidence report

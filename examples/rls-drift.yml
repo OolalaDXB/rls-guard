@@ -19,6 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: OolalaDXB/rlsguard@main
+      - uses: OolalaDXB/rls-guard@main
         with:
           live-url: ${{ secrets.RLS_GUARD_DATABASE_URL }}
