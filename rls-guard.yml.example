@@ -7,6 +7,15 @@ tenant:
   # ^ functions whose presence in a policy/function counts as tenant scoping.
   #   Heuristic: they are presumed to derive the tenant from the CALLER's
   #   identity, never from caller-supplied input. If yours don't, fix them first.
+  # fence: restrictive
+  # ^ opt-in (default: none). For schemas isolated by ONE restrictive policy per
+  #   table — for all roles and all commands, USING and WITH CHECK both exactly
+  #   `tenant_col = scope_fn()` — with permissive policies only choosing among the
+  #   tenant's own rows. Then: every tenant table must carry such a fence (I1);
+  #   permissive policies on fenced tables are not reported (I2/I3); a SECURITY
+  #   DEFINER is covered by the fence (I4) only if its owner neither bypasses RLS
+  #   nor owns an unforced tenant table it touches, every tenant table it names is
+  #   fenced, and its body never calls set_config / SET LOCAL / SET SESSION.
 
 privileged_roles: [service_role]  # roles that bypass tenant isolation by design (backend-only)
 

@@ -26,6 +26,12 @@ const DEFAULTS = {
     // the caller's identity, not from caller-supplied input) — documented
     // heuristic, see docs.
     scope_functions: ["current_tenant_id"],
+    // Opt-in: "restrictive" recognizes a RESTRICTIVE tenant fence — a policy
+    // applying to every role and every command whose USING and WITH CHECK
+    // both bind the tenant. Restrictive policies AND with permissive ones, so
+    // on a fenced table no permissive policy can reach another tenant's rows.
+    // Off by default: nothing changes unless the config asks for it.
+    fence: "none",
   },
   // Expressions anchoring a policy or function on the caller's identity.
   // A write policy referencing one of these is owner-scoped, not tenant-blind.
@@ -94,6 +100,9 @@ function normalizeException(raw, kind, warnings) {
 function validate(config) {
   if (!Array.isArray(config.tenant.columns) || config.tenant.columns.length === 0) {
     throw new ConfigError("tenant.columns must be a non-empty list of column names.");
+  }
+  if (!["none", "restrictive"].includes(config.tenant.fence)) {
+    throw new ConfigError(`tenant.fence must be "none" or "restrictive" (got: ${JSON.stringify(config.tenant.fence)}).`);
   }
   if (!Array.isArray(config.schemas.include) || config.schemas.include.length === 0) {
     throw new ConfigError("schemas.include must be a non-empty list of schema names.");

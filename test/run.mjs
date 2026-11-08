@@ -196,6 +196,32 @@ console.log("\n[11] schemas.exclude is enforced, not decorative");
   rmSync(dir, { recursive: true, force: true });
 }
 
+console.log("\n[12] tenant.fence: restrictive — a real fence clears permissive findings, a fake one does not");
+{
+  await recreateDb(admin, "rls_guard_fence");
+  const FENCE_URL = dbUrl("rls_guard_fence");
+  applySql(FENCE_URL, [BOOTSTRAP, resolve(FIXTURES, "fence", "001_fence.sql")]);
+  const dir = mkdtempSync(join(tmpdir(), "rlsguard-fence-"));
+  const off = cli(["check"], { url: FENCE_URL, cwd: dir, config: CONFIG });
+  assertThat("fence off by default: the `true` policy behind a fence is still reported", /\[I2\].*notes_rw/.test(off.out), off.out);
+  const r = cli(["check"], { url: FENCE_URL, cwd: dir, config: resolve(FIXTURES, "config", "fence.yml") });
+  assertThat("exit 1 (the fixture keeps real holes)", r.code === 1, `code=${r.code}\n${r.out}`);
+  assertThat("permissive `true` behind a fence (USING form with SELECT) not reported", !/notes_rw/.test(r.out), r.out);
+  assertThat("permissive write behind a fence (plain call form) not reported", !/cards_admin_write/.test(r.out), r.out);
+  assertThat("a loose fence (IS NOT NULL) is no fence: I1 + I2 still fire", /\[I1\].*public\.loose/.test(r.out) && /\[I2\].*loose_rw/.test(r.out), r.out);
+  assertThat("a table without a fence is reported under fence mode", /\[I1\].*public\.unfenced/.test(r.out), r.out);
+  assertThat("definer owned by a non-bypassing role, tables fenced: not reported", !/fenced_note_count/.test(r.out), r.out);
+  assertThat("definer owned by the superuser: reported", /\[I4\].*superuser_note_count/.test(r.out), r.out);
+  assertThat("definer that moves the tenant setting: reported", /\[I4\].*hop_note_count/.test(r.out), r.out);
+  assertThat("definer owning its table without FORCE RLS: reported", /\[I4\].*owner_owned_count/.test(r.out), r.out);
+  assertThat("definer EXECUTEing its text argument: reported as caller-supplied SQL", /\[I4\].*caller-supplied SQL.*run_sql/.test(r.out), r.out);
+  assertThat("bound (USING) and %L-quoted arguments are not dynamic SQL", !/safe_dynamic/.test(r.out), r.out);
+  const bad = cli(["check"], { url: FENCE_URL, cwd: dir, config: resolve(FIXTURES, "config", "fence-invalid.yml") });
+  assertThat("an unknown fence mode is a config error", bad.code === 2 && /tenant\.fence must be/.test(bad.out), bad.out);
+  rmSync(dir, { recursive: true, force: true });
+  await admin.query("drop database if exists rls_guard_fence with (force)");
+}
+
 await admin.end();
 rmSync(passDir, { recursive: true, force: true });
 rmSync(blockDir, { recursive: true, force: true });

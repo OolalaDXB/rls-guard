@@ -63,6 +63,32 @@ export async function runInvariants(client, config) {
 
   const policies = await fetchPolicies(client, config);
 
+  // Restrictive tenant fence (opt-in, tenant.fence: restrictive). A fenced
+  // table carries a RESTRICTIVE policy for every role and every command whose
+  // USING and WITH CHECK are exactly `tenant column = scope function()`.
+  // Restrictive policies are ANDed with the permissive ones, so no permissive
+  // policy on that table can reach or write another tenant's rows.
+  const fenced = new Map(); // table_fqn -> fence policy name
+  if (config.tenant.fence === "restrictive") {
+    for (const p of policies) {
+      if (p.permissive || p.polcmd !== "*" || !tenantFqns.has(p.table_fqn)) continue;
+      const roles = p.roles?.length ? p.roles : ["public"];
+      if (!roles.includes("public")) continue;
+      if (isFenceClause(p.using_expr, config) && isFenceClause(p.with_check_expr, config)) {
+        fenced.set(p.table_fqn, p.polname);
+      }
+    }
+    for (const t of effectiveTenantTables) {
+      if (t.rls_enabled && !fenced.has(t.table_fqn)) {
+        violations.push({
+          invariant: "I1",
+          table: t.table_fqn,
+          message: `Tenant-scoped table has no restrictive tenant fence (tenant.fence: restrictive): ${t.table_fqn}`,
+        });
+      }
+    }
+  }
+
   for (const p of policies) {
     const roles = p.roles?.length ? p.roles : ["public"];
     const privilegedOnly =
@@ -78,6 +104,10 @@ export async function runInvariants(client, config) {
     // tables. A `true` policy on a global reference table (config, registry)
     // is a deliberate publication, not a tenant leak.
     if (!tenantFqns.has(p.table_fqn)) continue;
+
+    // Under a restrictive fence, a permissive policy only chooses WHICH of the
+    // tenant's own rows a role sees; the fence already keeps other tenants out.
+    if (fenced.has(p.table_fqn)) continue;
 
     // I2 — permissive `true` policy reachable by non-privileged roles.
     if (isLiterallyTrue(p.using_expr) || isLiterallyTrue(p.with_check_expr)) {
@@ -112,11 +142,30 @@ export async function runInvariants(client, config) {
 
   // I4 — unguarded SECURITY DEFINER functions touching tenant tables.
   const definers = await fetchExposedDefiners(client, config);
+  // I4 (dynamic SQL) — a definer that EXECUTEs a string built from its own text
+  // argument runs the caller's SQL as its owner: no table name in the body, no
+  // guard that matters. Reported whatever the tables, since the SQL is the caller's.
+  const dynamicSql = new Set();
+  for (const fn of definers) {
+    const arg = executesTextArgument(fn);
+    if (!arg) continue;
+    const exception = matchFunctionException(config.exceptions.definer_functions, fn.proname, fn.signature);
+    if (exception) continue;
+    dynamicSql.add(fn.signature);
+    violations.push({
+      invariant: "I4",
+      function: fn.signature,
+      message: `SECURITY DEFINER executes caller-supplied SQL: ${fn.signature} — EXECUTE builds its statement from the argument "${arg}", and non-privileged roles can call it`,
+    });
+  }
+
   const tenantNamePattern = buildTenantTablePattern(effectiveTenantTables);
   if (tenantNamePattern) {
     for (const fn of definers) {
+      if (dynamicSql.has(fn.signature)) continue; // already reported above
       if (!tenantNamePattern.test(fn.def)) continue; // touches no tenant table
       if (hasDefinerGuard(fn.def, config)) continue;
+      if (fenced.size && fenceBindsDefiner(fn, effectiveTenantTables, fenced)) continue;
       const exception = matchFunctionException(config.exceptions.definer_functions, fn.proname, fn.signature);
       if (exception) continue;
       violations.push({
@@ -138,7 +187,9 @@ async function fetchTenantTables(client, config) {
       select
         n.nspname || '.' || c.relname as table_fqn,
         c.relname                     as relname,
-        c.relrowsecurity              as rls_enabled
+        c.relrowsecurity              as rls_enabled,
+        c.relforcerowsecurity         as rls_forced,
+        c.relowner::int               as owner_oid
       from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = any($1)
@@ -198,9 +249,17 @@ async function fetchExposedDefiners(client, config) {
         n.nspname || '.' || p.proname || '(' ||
           pg_get_function_identity_arguments(p.oid) || ')' as signature,
         p.proname,
-        pg_get_functiondef(p.oid)                          as def
+        pg_get_functiondef(p.oid)                          as def,
+        p.proowner::int                                    as owner_oid,
+        (r.rolsuper or r.rolbypassrls)                     as owner_bypasses_rls,
+        coalesce((
+          select array_agg(nm order by nm)
+            from unnest(p.proargnames, p.proargtypes::oid[]) as a(nm, typ)
+           where nm <> '' and typ in ('pg_catalog.text'::regtype, 'pg_catalog.varchar'::regtype, 'pg_catalog.bpchar'::regtype)
+        ), '{}'::text[])                                   as text_args
       from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
+      join pg_roles r     on r.oid = p.proowner
       where n.nspname = any($1)
         and p.prokind = 'f'
         and p.prosecdef
@@ -325,6 +384,73 @@ function hasDefinerGuard(body, config) {
     if (new RegExp(pattern, "i").test(body)) return true;
   }
   return false;
+}
+
+/**
+ * A fence clause is exactly `<tenant column> = <scope function>()`, possibly
+ * wrapped in the `(SELECT fn() AS fn)` form Postgres prints for an initPlan.
+ * Anything looser (IS NOT NULL, OR …, a second condition) is not a fence.
+ */
+function isFenceClause(expr, config) {
+  if (!expr) return false;
+  let s = expr.trim();
+  while (s.startsWith("(") && s.endsWith(")") && balanced(s.slice(1, -1))) s = s.slice(1, -1).trim();
+  const cols = config.tenant.columns.map(escapeRegex).join("|");
+  const fns = config.tenant.scope_functions.map(escapeRegex).join("|");
+  const call = `(?:\\w+\\.)?(?:${fns})\\(\\)`;
+  const rhs = `(?:${call}|\\(\\s*SELECT\\s+${call}(?:\\s+AS\\s+\\w+)?\\s*\\))`;
+  return new RegExp(`^(?:${cols})\\s*=\\s*${rhs}$`, "i").test(s);
+}
+
+function balanced(s) {
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/**
+ * A SECURITY DEFINER function runs as its owner, so the fence holds inside it
+ * only if RLS applies to that owner: the owner is neither superuser nor
+ * BYPASSRLS, and for every tenant table the body names, the table is fenced
+ * and the owner does not own it (an owner skips RLS unless FORCE ROW LEVEL
+ * SECURITY is on). A body that sets a setting (set_config, SET LOCAL/SESSION)
+ * could move the scope function to another tenant: it is not trusted.
+ */
+function fenceBindsDefiner(fn, tenantTables, fenced) {
+  if (fn.owner_bypasses_rls) return false;
+  if (/\bset_config\s*\(|\bset\s+(?:local|session)\s/i.test(fn.def)) return false;
+  for (const t of tenantTables) {
+    if (!new RegExp(`\\b${escapeRegex(t.relname)}\\b`, "i").test(fn.def)) continue;
+    if (!fenced.has(t.table_fqn)) return false;
+    if (t.owner_oid === fn.owner_oid && !t.rls_forced) return false;
+  }
+  return true;
+}
+
+/**
+ * The text argument a PL/pgSQL EXECUTE builds its statement from, or null.
+ * Only the statement part counts: what follows USING is bound as a value, and a
+ * format() whose placeholders are all %I / %L quotes what it inserts.
+ */
+function executesTextArgument(fn) {
+  const args = fn.text_args ?? [];
+  if (!args.length) return null;
+  const body = fn.def.replace(/--[^\n]*/g, "");
+  for (const m of body.matchAll(/\bexecute\s+([^;]*)/gi)) {
+    let stmt = m[1].split(/\busing\b/i)[0];
+    const fmt = stmt.match(/^\s*format\s*\(\s*'((?:[^']|'')*)'/i);
+    if (fmt) {
+      const placeholders = fmt[1].match(/%[^%]/g) ?? [];
+      if (placeholders.every((ph) => /%[IL]/i.test(ph))) continue;
+    }
+    for (const a of args) {
+      if (new RegExp(`(^|[^\\w.])${escapeRegex(a)}(?![\\w])`, "i").test(stmt)) return a;
+    }
+  }
+  return null;
 }
 
 function buildTenantTablePattern(tenantTables) {
