@@ -17,7 +17,7 @@ can hand to a security questionnaire.
 | **I1** | Every table carrying a tenant column (`tenant.columns`) has RLS enabled. |
 | **I2** | No permissive `true` policy on a tenant table is reachable by non-privileged roles. |
 | **I3** | No permissive write policy on a tenant table is blind to the tenant. Clauses are analyzed per command: INSERT's WITH CHECK and the new-row clause of UPDATE/ALL (WITH CHECK, or USING as fallback) must **bind the tenant** — an identity anchor alone still allows `UPDATE … SET tenant_id = …`. DELETE and the USING side accept owner-scoping. Permissive policies OR together, so one blind policy defeats every scoped one. |
-| **I4** | No `SECURITY DEFINER` function touching a tenant table, executable by non-privileged roles, lacks a caller-identity guard. |
+| **I4** | No `SECURITY DEFINER` function touching a tenant table, executable by non-privileged roles, lacks a caller-identity guard — and none executable by them runs SQL built from its own text argument (`EXECUTE p_sql`), whatever the tables. |
 
 Plus **STATE**: when a committed baseline exists, the replayed RLS posture
 must match it.
