@@ -204,9 +204,10 @@ function applySql(path) {
  * the run ended with no verdict and no report. The temporary server does not
  * listen on TCP, so `-h 127.0.0.1` only succeeds on the real one.
  */
-const READY_PROBE = ["pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"];
-
 async function waitForReady(name) {
+  // Declared here, not at module level: this file runs top-down and calls
+  // waitForReady before reaching the bottom of the module.
+  const READY_PROBE = ["pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"];
   let streak = 0;
   for (let i = 0; i < 90; i++) {
     const r = spawnSync("docker", ["exec", name, ...READY_PROBE], { stdio: "ignore" });
