@@ -8,6 +8,7 @@
  * They need no database — the refusals fire before anything connects.
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -78,6 +79,18 @@ console.log("\n[G2bis] live-url on schedule is allowed through the guards");
   const r = entry({ GITHUB_EVENT_NAME: "schedule", INPUT_LIVE_URL: "postgres://postgres:x@127.0.0.1:1/x" });
   assertThat("no guard refusal", !/refuses/.test(r.out), `code=${r.code}\n${r.out}`);
   assertThat("proceeds to drift (fails on connect, not on policy)", /drift failed|No baseline/.test(r.out), r.out);
+}
+
+console.log("\n[G3] self-booted postgres: readiness is probed over TCP, never on the socket alone");
+{
+  // The image's temporary init server answers on the Unix socket and is then
+  // stopped: a socket-only probe let the bootstrap connect to a dying server
+  // (no verdict, no report). The temporary server does not listen on TCP.
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "..", "action", "entrypoint.mjs"), "utf8");
+  const probe = src.match(/const READY_PROBE = \[([^\]]+)\]/)?.[1] ?? "";
+  assertThat("probe targets 127.0.0.1", /"pg_isready"/.test(probe) && /"-h", "127\.0\.0\.1"/.test(probe), probe);
+  assertThat("the probe actually used is READY_PROBE", /\["exec", name, \.\.\.READY_PROBE\]/.test(src), "waitForReady does not use READY_PROBE");
+  assertThat("two consecutive successes are required", /streak >= 2/.test(src), "single success accepted");
 }
 
 console.log(`\n${passed} passed, ${failed} failed.`);

@@ -195,11 +195,24 @@ function applySql(path) {
   }
 }
 
+/**
+ * Readiness is probed over TCP loopback INSIDE the container, twice in a row.
+ * The official postgres image first runs a temporary init server that listens
+ * on the Unix socket only, then stops it and starts the real one. A bare
+ * `pg_isready` (socket) answers during that temporary server: the bootstrap
+ * then connected just as it shut down (« server closed the connection »), and
+ * the run ended with no verdict and no report. The temporary server does not
+ * listen on TCP, so `-h 127.0.0.1` only succeeds on the real one.
+ */
+const READY_PROBE = ["pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres"];
+
 async function waitForReady(name) {
-  for (let i = 0; i < 60; i++) {
-    const r = spawnSync("docker", ["exec", name, "pg_isready", "-U", "postgres"], { stdio: "ignore" });
-    if (r.status === 0) return;
+  let streak = 0;
+  for (let i = 0; i < 90; i++) {
+    const r = spawnSync("docker", ["exec", name, ...READY_PROBE], { stdio: "ignore" });
+    streak = r.status === 0 ? streak + 1 : 0;
+    if (streak >= 2) return;
     await new Promise((res) => setTimeout(res, 1000));
   }
-  throw new Error("ephemeral postgres did not become ready within 60s");
+  throw new Error("ephemeral postgres did not become ready within 90s");
 }
