@@ -37,6 +37,8 @@ export async function check(client, config, { snapshotPath, reportDir }) {
   violations.push(...coverage.violations);
 
   const stale = unusedExceptions(config);
+  // Not enforced → reported as NOT RUN, never as a pass (stale ones are still printed).
+  if (!config.exceptions_policy.fail_on_stale) notRun.push("EXCEPTIONS");
   if (config.exceptions_policy.fail_on_stale) {
     for (const e of stale) {
       violations.push({
@@ -47,6 +49,19 @@ export async function check(client, config, { snapshotPath, reportDir }) {
   }
 
   printExceptionReport(usedExceptions(config), stale);
+  // A policy exception that matches nothing because its table is out of scope
+  // is the worst kind of stale: it reads as "reviewed", yet nothing was checked.
+  const scoped = new Set(live.tables.filter((t) => t.has_tenant_column).map((t) => t.table_fqn));
+  for (const e of stale) {
+    if (e.kind !== "public_policies" && e.kind !== "tenant_blind_writes") continue;
+    const hits = live.policies.filter((p) => p.name === e.name && !scoped.has(p.table_fqn));
+    for (const p of hits) {
+      console.warn(
+        `⚠ Exception ${e.kind}: ${e.name} names a policy of ${p.table_fqn}, a table without tenant column — ` +
+          "that policy is NOT inspected by any invariant; the exception has no effect and attests nothing."
+      );
+    }
+  }
   printScope(coverage.summary, violations, notRun);
   writeActionOutputs(coverage.summary, notRun);
 

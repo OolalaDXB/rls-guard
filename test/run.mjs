@@ -274,7 +274,7 @@ console.log("\n[13] coverage — a check that inspected nothing is not a pass");
   assertThat("each untracked table declared global with a reason → exit 0", f2.code === 0, `code=${f2.code}\n${f2.out}`);
 
   // (g) pass / FAIL / NOT RUN are three different things.
-  assertThat("summary distinguishes STATE NOT RUN from pass", /Checks: I1 pass · I2 pass · I3 pass · I4 pass · STATE NOT RUN · COVERAGE pass/.test(def.out), def.out);
+  assertThat("summary distinguishes STATE NOT RUN from pass", /Checks: I1 pass · I2 pass · I3 pass · I4 pass · STATE NOT RUN · COVERAGE pass · EXCEPTIONS NOT RUN/.test(def.out), def.out);
   assertThat("pass message says STATE is not part of the verdict", /STATE not run \(no baseline\)/.test(def.out), def.out);
   const needState = writeCfg("need-state.yml", `tenant:\n  columns: [tenant_id]\n  scope_functions: [current_tenant_id]\nschemas:\n  include: [public]\ncoverage:\n  required_checks: [STATE]\n${HEAD}`);
   const g = cli(["check"], { url: PASS_URL, cwd: dir, config: needState });
@@ -290,8 +290,15 @@ console.log("\n[13] coverage — a check that inspected nothing is not a pass");
   const staleBody = `tenant:\n  columns: [tenant_id]\n  scope_functions: [current_tenant_id]\nschemas:\n  include: [public]\nexceptions:\n  tenant_blind_writes:\n    - name: policy_that_was_removed\n      reason: "left behind"\n${HEAD}`;
   const h2 = cli(["check"], { url: PASS_URL, cwd: dir, config: writeCfg("stale-warn.yml", staleBody) });
   assertThat("stale exception: reported, not blocking by default", h2.code === 0 && /policy_that_was_removed/.test(h2.out), `code=${h2.code}\n${h2.out}`);
+  assertThat("stale not enforced: EXCEPTIONS is NOT RUN, never pass", /EXCEPTIONS NOT RUN/.test(h2.out) && !/EXCEPTIONS pass/.test(h2.out), h2.out);
+  const h4 = cli(["check"], { url: PASS_URL, cwd: dir, config: writeCfg("stale-clean.yml", `tenant:\n  columns: [tenant_id]\n  scope_functions: [current_tenant_id]\nschemas:\n  include: [public]\nexceptions_policy:\n  fail_on_stale: true\n${HEAD}`) });
+  assertThat("fail_on_stale with nothing stale: EXCEPTIONS pass, exit 0", h4.code === 0 && /EXCEPTIONS pass/.test(h4.out), `code=${h4.code}\n${h4.out}`);
   const h3 = cli(["check"], { url: PASS_URL, cwd: dir, config: writeCfg("stale-fail.yml", staleBody + "exceptions_policy:\n  fail_on_stale: true\n") });
   assertThat("fail_on_stale: a stale exception blocks", h3.code === 1 && /\[EXCEPTIONS\].*policy_that_was_removed/.test(h3.out), `code=${h3.code}\n${h3.out}`);
+
+  // (h') An exception on a policy whose table is out of scope reviews nothing: say so.
+  const oos = cli(["check"], { url: PASS_URL, cwd: dir, config: writeCfg("oos.yml", `tenant:\n  columns: [tenant_id]\n  scope_functions: [current_tenant_id]\nschemas:\n  include: [public]\nexceptions:\n  public_policies:\n    - name: app_settings_public_read\n      reason: "public settings"\n${HEAD}`) });
+  assertThat("exception on an out-of-scope table: flagged as attesting nothing", /app_settings_public_read names a policy of public\.app_settings, a table without tenant column/.test(oos.out), oos.out);
 
   // (i) Evidence carries the scope, so a consumer can assert it without a script of its own.
   const rdir = join(dir, "ev");
