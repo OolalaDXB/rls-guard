@@ -34,6 +34,18 @@ schemas:
 #   identity_guards: []         # extra regexes recognized as caller-identity guards
 #                               # in SECURITY DEFINER bodies (e.g. "\\bassert_caller\\b")
 
+# A check that inspected nothing is not a pass (docs/configuration.md).
+coverage:
+  min_tenant_tables: 1        # set your project's floor; 0 opts out
+  required_tables: []         # tables that must exist and be tenant-scoped
+  untracked_tables: report    # `fail`: every table without a tenant column must
+                              # be declared in exceptions.global_tables
+  required_checks: []         # e.g. [STATE] once a baseline is committed
+
+exceptions_policy:
+  require_reason: false       # true: an exception without a reason is a config error
+  fail_on_stale: false        # true: an exception matching nothing blocks
+
 exceptions:
   # Every exception needs a reason. They are listed in every run's output and
   # excluded from the attestation — declared, motivated, visible, never silent.

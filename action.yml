@@ -54,6 +54,15 @@ outputs:
   verdict:
     description: "pass or block"
     value: ${{ steps.check.outputs.verdict }}
+  tenant-tables:
+    description: "Number of tenant-scoped tables the invariants were applied to"
+    value: ${{ steps.check.outputs.tenant-tables }}
+  untracked-tables:
+    description: "Number of tables without a tenant column (outside every invariant)"
+    value: ${{ steps.check.outputs.untracked-tables }}
+  checks-not-run:
+    description: "Comma-separated checks that did not run (e.g. STATE without a baseline)"
+    value: ${{ steps.check.outputs.checks-not-run }}
 
 runs:
   using: composite
