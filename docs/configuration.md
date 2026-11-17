@@ -101,6 +101,46 @@ in the evidence report as *excluded from attestation*; an exception matching
 nothing is reported as stale; an expired exception re-enforces the invariant.
 A bare string is tolerated as shorthand for `{name: …}` and warns.
 
+## `coverage.*` — a check that inspected nothing is not a pass
+
+The invariants only apply to **tenant-scoped tables** (tables carrying one of
+`tenant.columns`). Three hollow passes follow from that, each seen on a real
+project: the tenant column of the config does not exist yet (zero tables in
+scope); a schema of `schemas.include` is misspelled or was not replayed; a
+table has no tenant column and is therefore outside every invariant.
+
+```yaml
+coverage:
+  min_tenant_tables: 1      # default. Fewer tenant-scoped tables → block.
+                            # Set your project's floor (e.g. 40) so a refactor
+                            # that silently drops tables out of scope fails.
+                            # 0 opts out, for a schema with no tenant data yet.
+  required_tables:          # default []. Each must exist AND be tenant-scoped.
+    - public.orders         # schema-qualified or bare name
+  untracked_tables: report  # default. `fail` blocks on any table without a
+                            # tenant column that is not declared in
+                            # exceptions.global_tables.
+  required_checks: []       # e.g. [STATE]: a check that did not run blocks.
+                            # Allowed: I1, I2, I3, I4, STATE.
+```
+
+Always enforced, not configurable: a schema listed in `schemas.include` that
+contains no table is a `COVERAGE` violation.
+
+Every run prints the scope and one status per check — `pass`, `FAIL` or
+`NOT RUN` — and the evidence carries `checks_not_run`,
+`inventory.tables_untracked` and `coverage_requirements`. `STATE` without a
+committed baseline is `NOT RUN`: it is never counted as a pass, and blocks
+only if you list it in `required_checks`.
+
+## `exceptions_policy.*` — how strictly exceptions are held
+
+```yaml
+exceptions_policy:
+  require_reason: false   # true: an exception without a reason is a config error (exit 2)
+  fail_on_stale: false    # true: an exception matching nothing blocks ([EXCEPTIONS])
+```
+
 ## `postgres_version` — default `"16"`
 
 Image tag of the ephemeral Postgres the GitHub Action boots for replay.
@@ -138,3 +178,12 @@ see the README), consumed by `check` (state comparison) and `drift`
 
 Outputs: `verdict` = `pass` or `block` (only for real check outcomes — an
 error produces no verdict).
+
+## GitHub Action outputs
+
+| Output | Meaning |
+|---|---|
+| `verdict` | `pass` or `block` |
+| `tenant-tables` | number of tenant-scoped tables the invariants were applied to |
+| `untracked-tables` | number of tables without a tenant column (outside every invariant) |
+| `checks-not-run` | comma-separated checks that did not run (e.g. `STATE`) |

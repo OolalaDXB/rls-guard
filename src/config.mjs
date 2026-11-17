@@ -49,6 +49,25 @@ const DEFAULTS = {
     tenant_blind_writes: [],
     definer_functions: [],
   },
+  // A check that inspected nothing must not read as a pass — see src/coverage.mjs.
+  coverage: {
+    // Fewer tenant-scoped tables than this → block. Default 1: zero tables in
+    // scope means every invariant passes vacuously. Set 0 only for a schema
+    // that genuinely has no tenant data yet.
+    min_tenant_tables: 1,
+    // Tables that MUST be tenant-scoped (fqn "schema.table" or bare name).
+    required_tables: [],
+    // Tables without any tenant column: "report" lists them, "fail" blocks
+    // unless each is declared in exceptions.global_tables.
+    untracked_tables: "report",
+    // Checks that must actually run, e.g. ["STATE"]. Not-run → block.
+    required_checks: [],
+  },
+  // How strictly exceptions are held. Both default to false (warn only).
+  exceptions_policy: {
+    require_reason: false, // an exception without a reason is a config error
+    fail_on_stale: false,  // an exception matching nothing blocks
+  },
   postgres_version: "16",
   paths: { snapshot: "db/rls-snapshot.json" },
 };
@@ -69,6 +88,16 @@ export function loadConfig(path = DEFAULT_CONFIG_PATH) {
     config.exceptions[kind] = (config.exceptions[kind] ?? []).map((raw) =>
       normalizeException(raw, kind, warnings)
     );
+  }
+  if (config.exceptions_policy?.require_reason === true) {
+    const bare = EXCEPTION_KINDS.flatMap((kind) =>
+      config.exceptions[kind].filter((e) => !e.reason).map((e) => `exceptions.${kind}: "${e.name}"`)
+    );
+    if (bare.length > 0) {
+      throw new ConfigError(
+        `exceptions_policy.require_reason is on and ${bare.length} exception(s) have no reason: ${bare.join("; ")}.`
+      );
+    }
   }
 
   validate(config);
@@ -106,6 +135,25 @@ function validate(config) {
   }
   if (!Array.isArray(config.schemas.include) || config.schemas.include.length === 0) {
     throw new ConfigError("schemas.include must be a non-empty list of schema names.");
+  }
+  const cov = config.coverage;
+  if (!cov || typeof cov !== "object") throw new ConfigError("coverage must be a mapping.");
+  if (!Number.isInteger(cov.min_tenant_tables) || cov.min_tenant_tables < 0) {
+    throw new ConfigError(`coverage.min_tenant_tables must be a non-negative integer (got: ${JSON.stringify(cov.min_tenant_tables)}).`);
+  }
+  if (!Array.isArray(cov.required_tables) || cov.required_tables.some((t) => typeof t !== "string" || !t)) {
+    throw new ConfigError("coverage.required_tables must be a list of table names.");
+  }
+  if (!["report", "fail"].includes(cov.untracked_tables)) {
+    throw new ConfigError(`coverage.untracked_tables must be "report" or "fail" (got: ${JSON.stringify(cov.untracked_tables)}).`);
+  }
+  const KNOWN_CHECKS = ["I1", "I2", "I3", "I4", "STATE"];
+  if (!Array.isArray(cov.required_checks) || cov.required_checks.some((c) => !KNOWN_CHECKS.includes(c))) {
+    throw new ConfigError(`coverage.required_checks must be a list among ${KNOWN_CHECKS.join(", ")} (got: ${JSON.stringify(cov.required_checks)}).`);
+  }
+  const pol = config.exceptions_policy;
+  if (!pol || typeof pol.require_reason !== "boolean" || typeof pol.fail_on_stale !== "boolean") {
+    throw new ConfigError("exceptions_policy.require_reason and exceptions_policy.fail_on_stale must be booleans.");
   }
   for (const pattern of config.definer.identity_guards) {
     try {

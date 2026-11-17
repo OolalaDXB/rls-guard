@@ -75,3 +75,18 @@ tenant. The obvious-false-positive classes found during that validation
 (trigger functions, deny-all `false` policies, intentionally-global
 reference tables) were each turned into engine rules or documented
 exception paths, with dedicated fixtures.
+
+## Scope (what the invariants never look at)
+
+- **Tables without a tenant column** are outside I1–I4, whatever their RLS
+  state. They are counted on every run and listed in the evidence
+  (`inventory.tables_untracked`); `coverage.untracked_tables: fail` makes each
+  one a declared exception or a failure. RLS Guard still does not judge *how*
+  such a table should be protected — that stays with the project's own access
+  tests.
+- **Views, GRANTs and storage policies** are not inspected.
+- **STATE** runs only against a committed baseline. Without one it is reported
+  `NOT RUN`, never `pass`; list it in `coverage.required_checks` to make its
+  absence blocking.
+- RLS Guard checks structure, not behaviour: it does not replace tests that
+  impersonate real users (roles, households, product rights, revocation).

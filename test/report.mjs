@@ -65,7 +65,7 @@ console.log("[R1] PASS report — verdict, invariants, coverage, boundary");
   assertThat("evidence.json + evidence.html written", existsSync(jsonPath) && existsSync(htmlPath), r.out);
   const rep = JSON.parse(readFileSync(jsonPath, "utf8"));
   assertThat("format + verdict pass", rep.format === "rls-guard-evidence/1" && rep.verdict === "pass", JSON.stringify(rep).slice(0, 300));
-  assertThat("I1–I4 pass", rep.invariants.filter((i) => i.id !== "STATE").every((i) => i.status === "pass"), JSON.stringify(rep.invariants));
+  assertThat("I1–I4 pass", ["I1", "I2", "I3", "I4", "COVERAGE"].every((id) => rep.invariants.find((i) => i.id === id)?.status === "pass"), JSON.stringify(rep.invariants));
   assertThat("STATE is not-run without a baseline (JSON)", rep.invariants.find((i) => i.id === "STATE").status === "not-run", JSON.stringify(rep.invariants));
   assertThat("attestation metadata present", !!rep.config_hash && !!rep.tool_version && !!rep.postgres_server_version, JSON.stringify(rep).slice(0, 300));
   const widgets = rep.inventory.coverage.find((c) => c.table_fqn === "public.widgets");

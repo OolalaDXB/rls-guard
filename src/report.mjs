@@ -27,6 +27,8 @@ const INVARIANTS = [
   { id: "I3", title: "No tenant-blind write policy (per-clause analysis: new-row clauses must bind the tenant)" },
   { id: "I4", title: "No unguarded SECURITY DEFINER function touching tenant tables, executable by non-privileged roles" },
   { id: "STATE", title: "Replayed RLS state matches the committed baseline" },
+  { id: "COVERAGE", title: "The check inspected what the project expects (minimum scope, required tables, untracked tables, required checks)" },
+  { id: "EXCEPTIONS", title: "No stale exception (enforced when exceptions_policy.fail_on_stale is on)" },
 ];
 
 export const PROOF_BOUNDARY = {
@@ -48,8 +50,8 @@ export const PROOF_BOUNDARY = {
 };
 
 /** Generate and write evidence.json + evidence.html. Returns their paths. */
-export async function writeEvidenceReport(client, config, { violations, reportDir, baselinePresent = false }) {
-  const report = await buildReport(client, config, violations, baselinePresent);
+export async function writeEvidenceReport(client, config, { violations, reportDir, baselinePresent = false, coverage = null }) {
+  const report = await buildReport(client, config, violations, baselinePresent, coverage);
   mkdirSync(reportDir, { recursive: true });
   const jsonPath = join(reportDir, "evidence.json");
   const htmlPath = join(reportDir, "evidence.html");
@@ -58,7 +60,7 @@ export async function writeEvidenceReport(client, config, { violations, reportDi
   return { jsonPath, htmlPath };
 }
 
-async function buildReport(client, config, violations, baselinePresent) {
+async function buildReport(client, config, violations, baselinePresent, coverageSummary) {
   const schemas = effectiveSchemas(config);
   const { rows: [{ server_version }] } = await client.query("select current_setting('server_version') as server_version");
 
@@ -96,6 +98,10 @@ async function buildReport(client, config, violations, baselinePresent) {
       return { id, title, status: "not-run", violations: [] };
     }
     const found = violations.filter((v) => v.invariant === id);
+    // EXCEPTIONS only runs when the project asked for it.
+    if (id === "EXCEPTIONS" && !config.exceptions_policy.fail_on_stale) {
+      return { id, title, status: "not-run", violations: [] };
+    }
     return { id, title, status: found.length === 0 ? "pass" : "fail", violations: found.map((v) => v.message) };
   });
 
@@ -117,10 +123,22 @@ async function buildReport(client, config, violations, baselinePresent) {
     inventory: {
       tenant_tables: tenantTables.map(({ table_fqn, rls_enabled, rls_forced }) => ({ table_fqn, rls_enabled, rls_forced })),
       tables_declared_global: excludedGlobal.map((t) => t.table_fqn),
+      // Tables no invariant applies to: no tenant column, not declared global.
+      tables_untracked: coverageSummary?.tables_untracked ?? [],
+      tables_total: tables.length,
       policies_total: policies.length,
       coverage,
     },
     invariants,
+    checks_not_run: invariants.filter((i) => i.status === "not-run").map((i) => i.id),
+    coverage_requirements: coverageSummary
+      ? {
+          min_tenant_tables: coverageSummary.min_tenant_tables,
+          required_tables: coverageSummary.required_tables,
+          untracked_tables: coverageSummary.untracked_tables_mode,
+          required_checks: coverageSummary.required_checks,
+        }
+      : null,
     definer_inventory: definerInventory,
     exceptions: {
       in_effect: usedExceptions(config),
